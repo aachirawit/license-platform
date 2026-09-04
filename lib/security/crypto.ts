@@ -89,9 +89,13 @@ export function hashLicenseKey(rawKey: string): string {
 // GCM's auth tag detects any tampering on decrypt.
 
 function encryptionKey(): Buffer {
-  // Derive a fixed 32-byte key from the env secret (which is an arbitrary-length
-  // string) via SHA-256, so any sufficiently long secret works.
-  return createHash("sha256").update(requireSecret("KEY_ENCRYPTION_SECRET")).digest();
+  // Prefer a dedicated KEY_ENCRYPTION_SECRET. If it is not set, derive the key
+  // from LICENSE_HMAC_SECRET (already required to run) so encrypted key storage
+  // works out of the box without provisioning another env var. A dedicated
+  // secret is still cleaner - set KEY_ENCRYPTION_SECRET to use it. Either way,
+  // SHA-256 turns the arbitrary-length secret into a fixed 32-byte AES key.
+  const secret = process.env.KEY_ENCRYPTION_SECRET || requireSecret("LICENSE_HMAC_SECRET");
+  return createHash("sha256").update(secret).digest();
 }
 
 export function encryptKey(plaintext: string): string {

@@ -283,7 +283,14 @@ export async function revealLicenseKey(id: string, ctx: ActionContext): Promise<
     throw Errors.invalid("This key predates encrypted storage and cannot be revealed.");
   }
 
-  const plaintext = decryptKey(row.keyCipher);
+  let plaintext: string;
+  try {
+    plaintext = decryptKey(row.keyCipher);
+  } catch {
+    // Decryption fails if the encryption secret changed since the key was
+    // stored. Surface a clean message instead of a 500.
+    throw Errors.invalid("This key cannot be decrypted (the encryption secret changed).");
+  }
 
   await writeAudit({
     adminId: ctx.adminId,
