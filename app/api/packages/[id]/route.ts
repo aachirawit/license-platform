@@ -29,7 +29,7 @@ async function ownerAppId(packageId: string): Promise<string> {
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("package.write");
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
 
     const { id } = await params;
     const appId = await ownerAppId(id);
@@ -58,7 +58,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("package.write");
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
 
     const { id } = await params;
     const appId = await ownerAppId(id);

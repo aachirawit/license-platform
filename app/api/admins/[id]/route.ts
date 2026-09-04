@@ -15,7 +15,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("admin.write");
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
     const { id } = await params;
     const body = await req.json().catch(() => null);
     const input = updateAdminSchema.parse(body);

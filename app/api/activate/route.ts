@@ -44,7 +44,7 @@ const REFUSAL_MESSAGE: Record<string, string> = {
 export async function POST(req: NextRequest) {
   try {
     const ip = clientIp(req);
-    rateLimit(RULES.activate, ip ?? "unknown");
+    await rateLimit(RULES.activate, ip ?? "unknown");
 
     const body = await req.json().catch(() => null);
     const input = activateSchema.parse(body);

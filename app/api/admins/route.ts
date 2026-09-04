@@ -23,7 +23,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const admin = await requirePermission("admin.write");
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
     const body = await req.json().catch(() => null);
     const input = createAdminSchema.parse(body);
     const created = await createAdmin(input);

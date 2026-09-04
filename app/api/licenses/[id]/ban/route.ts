@@ -14,7 +14,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function POST(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("license.ban");
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const { reason } = banLicenseSchema.parse(body ?? {});

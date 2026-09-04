@@ -26,7 +26,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const admin = await requirePermission("app.write");
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
 
     const body = await req.json().catch(() => null);
     const input = createAppSchema.parse(body);

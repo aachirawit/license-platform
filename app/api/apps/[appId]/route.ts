@@ -31,7 +31,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("app.write");
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
 
     const { appId } = await params;
     const body = await req.json().catch(() => null);
@@ -62,7 +62,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     if (!isAtLeast(admin.role, "SUPER_ADMIN")) {
       throw Errors.forbidden("Only a super admin can delete an application");
     }
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
 
     const { appId } = await params;
     const result = await deleteApp(appId);

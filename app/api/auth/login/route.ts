@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   try {
     const ip = clientIp(req);
     // Volume guard keyed by IP, before touching argon2.
-    rateLimit(RULES.login, ip ?? "unknown");
+    await rateLimit(RULES.login, ip ?? "unknown");
 
     const body = await req.json().catch(() => null);
     const { email, password } = loginSchema.parse(body);

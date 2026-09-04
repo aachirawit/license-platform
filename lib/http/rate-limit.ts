@@ -1,16 +1,71 @@
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
+
 import { Errors } from "./errors";
 
-// A small fixed-window rate limiter.
+// Rate limiting with two backends behind one async call.
 //
-// It is intentionally in-process: the platform targets Vercel + Neon with no
-// Redis, per the brief. Each serverless instance keeps its own counters, so
-// this is a per-instance guard - a real defence-in-depth ceiling for brute
-// force and spam, not a globally exact quota. For login specifically, the
-// database-backed failed-attempt lock in the auth service is the authoritative
-// control; this limiter blunts volume before it reaches that logic.
+// - GLOBAL (preferred): when UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
+//   are set, counters live in Upstash Redis, shared across every serverless
+//   instance. This is the accurate limit - a burst spread over many Vercel
+//   instances is still counted as one.
+// - IN-PROCESS (fallback): with no Upstash configured, each instance keeps its
+//   own counters. A real defence-in-depth ceiling, but per-instance, so it is
+//   looser under scale. Keeps local dev and un-provisioned deploys working.
 //
-// When the platform later needs a global limit (multiple instances), swap this
-// module's implementation for a Redis/Upstash store behind the same signature.
+// The signature is async so callers `await rateLimit(...)`; the throw on limit
+// is the same in both paths, handled by toErrorResponse.
+
+export interface RateLimitRule {
+  /** Distinct namespace, e.g. "login" or "generate". */
+  name: string;
+  limit: number;
+  windowMs: number;
+}
+
+// Standard rules. Login is strict; reads are loose.
+export const RULES = {
+  login: { name: "login", limit: 8, windowMs: 5 * 60_000 },
+  generate: { name: "generate", limit: 20, windowMs: 60_000 },
+  mutation: { name: "mutation", limit: 60, windowMs: 60_000 },
+  read: { name: "read", limit: 240, windowMs: 60_000 },
+  // Public, unauthenticated key activation. Kept tight per IP to blunt key
+  // brute-forcing; a legitimate client activates only occasionally.
+  activate: { name: "activate", limit: 30, windowMs: 5 * 60_000 },
+} satisfies Record<string, RateLimitRule>;
+
+// ── Upstash (global) ──────────────────────────────────────────────────────────
+
+let limiters: Map<string, Ratelimit> | null | undefined;
+
+function upstashLimiters(): Map<string, Ratelimit> | null {
+  if (limiters !== undefined) return limiters;
+
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) {
+    limiters = null; // not configured; use the in-process fallback
+    return null;
+  }
+
+  const redis = new Redis({ url, token });
+  const map = new Map<string, Ratelimit>();
+  for (const rule of Object.values(RULES)) {
+    map.set(
+      rule.name,
+      new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(rule.limit, `${rule.windowMs} ms`),
+        prefix: `rl:${rule.name}`,
+        analytics: false,
+      }),
+    );
+  }
+  limiters = map;
+  return map;
+}
+
+// ── In-process (fallback) ─────────────────────────────────────────────────────
 
 interface Bucket {
   count: number;
@@ -30,19 +85,7 @@ function sweep(now: number) {
   }
 }
 
-export interface RateLimitRule {
-  /** Distinct namespace, e.g. "login" or "generate". */
-  name: string;
-  limit: number;
-  windowMs: number;
-}
-
-/**
- * Consume one unit for `identifier` under `rule`. Throws RATE_LIMITED when the
- * window is exhausted. `identifier` is typically the client IP, or IP+email for
- * login so one noisy network cannot lock out everyone.
- */
-export function rateLimit(rule: RateLimitRule, identifier: string): void {
+function rateLimitInProcess(rule: RateLimitRule, identifier: string): void {
   const now = Date.now();
   sweep(now);
 
@@ -56,21 +99,31 @@ export function rateLimit(rule: RateLimitRule, identifier: string): void {
 
   if (bucket.count >= rule.limit) {
     const retryMs = bucket.resetAt - now;
-    throw Errors.rateLimited(
-      `Too many requests. Try again in ${Math.ceil(retryMs / 1000)}s.`,
-    );
+    throw Errors.rateLimited(`Too many requests. Try again in ${Math.ceil(retryMs / 1000)}s.`);
   }
 
   bucket.count += 1;
 }
 
-// Standard rules. Login is strict; reads are loose.
-export const RULES = {
-  login: { name: "login", limit: 8, windowMs: 5 * 60_000 },
-  generate: { name: "generate", limit: 20, windowMs: 60_000 },
-  mutation: { name: "mutation", limit: 60, windowMs: 60_000 },
-  read: { name: "read", limit: 240, windowMs: 60_000 },
-  // Public, unauthenticated key activation. Kept tight per IP to blunt key
-  // brute-forcing; a legitimate client activates only occasionally.
-  activate: { name: "activate", limit: 30, windowMs: 5 * 60_000 },
-} satisfies Record<string, RateLimitRule>;
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Consume one unit for `identifier` under `rule`. Throws RATE_LIMITED when the
+ * window is exhausted. `identifier` is typically the client IP, or the admin id
+ * for authenticated mutations. Uses Upstash when configured, else in-process.
+ */
+export async function rateLimit(rule: RateLimitRule, identifier: string): Promise<void> {
+  const global = upstashLimiters();
+  if (global) {
+    const limiter = global.get(rule.name);
+    if (limiter) {
+      const { success, reset } = await limiter.limit(identifier);
+      if (!success) {
+        const retryMs = Math.max(0, reset - Date.now());
+        throw Errors.rateLimited(`Too many requests. Try again in ${Math.ceil(retryMs / 1000)}s.`);
+      }
+      return;
+    }
+  }
+  rateLimitInProcess(rule, identifier);
+}

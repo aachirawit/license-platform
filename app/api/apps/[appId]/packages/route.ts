@@ -31,7 +31,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 export async function POST(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("package.write");
-    rateLimit(RULES.mutation, admin.id);
+    await rateLimit(RULES.mutation, admin.id);
 
     const { appId } = await params;
     const app = await getAppOrThrow(appId);

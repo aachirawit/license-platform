@@ -18,7 +18,7 @@ type Params = { params: Promise<{ appId: string }> };
 export async function POST(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("license.generate");
-    rateLimit(RULES.generate, admin.id);
+    await rateLimit(RULES.generate, admin.id);
 
     const { appId } = await params;
     const body = await req.json().catch(() => null);
