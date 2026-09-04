@@ -79,7 +79,7 @@ export function LicenseActions({
     }
   }
 
-  const anyAction = canBan || canUnban || canRevoke || perms.extend || (perms.resetHwid && license.hwidBound);
+  const anyAction = canBan || canUnban || canRevoke || perms.extend || perms.resetHwid;
   if (!anyAction) return null;
 
   return (
@@ -91,10 +91,10 @@ export function LicenseActions({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {perms.resetHwid && license.hwidBound && (
-            <DropdownMenuItem onClick={() => setDialog("reset")}>
+          {perms.resetHwid && (
+            <DropdownMenuItem onClick={() => setDialog("reset")} disabled={!license.hwidBound}>
               <RotateCcw className="h-4 w-4" />
-              Reset HWID
+              Reset HWID{!license.hwidBound && " (not bound)"}
             </DropdownMenuItem>
           )}
           {perms.extend && (
