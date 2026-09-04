@@ -1,4 +1,11 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 
 // Server-only cryptography helpers. This module must never be imported from a
 // client component - it reads server secrets and hashes identifiers.
@@ -69,6 +76,40 @@ export function hashLicenseKey(rawKey: string): string {
   return createHmac("sha256", requireSecret("LICENSE_HMAC_SECRET"))
     .update(rawKey.trim().toUpperCase())
     .digest("hex");
+}
+
+// ─── Reversible key storage (AES-256-GCM) ──────────────────────────────────────
+//
+// The keyHash above is one-way (for lookup + uniqueness). Separately, we keep an
+// ENCRYPTED copy of the plaintext so an admin can reveal/copy a key from the
+// panel later. Encryption, not plaintext: a database dump on its own is useless
+// without KEY_ENCRYPTION_SECRET, which lives only in the server environment.
+//
+// Format: "iv.tag.ciphertext", all hex. A fresh random 96-bit IV per encryption;
+// GCM's auth tag detects any tampering on decrypt.
+
+function encryptionKey(): Buffer {
+  // Derive a fixed 32-byte key from the env secret (which is an arbitrary-length
+  // string) via SHA-256, so any sufficiently long secret works.
+  return createHash("sha256").update(requireSecret("KEY_ENCRYPTION_SECRET")).digest();
+}
+
+export function encryptKey(plaintext: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString("hex")}.${tag.toString("hex")}.${ct.toString("hex")}`;
+}
+
+export function decryptKey(stored: string): string {
+  const [ivHex, tagHex, ctHex] = stored.split(".");
+  if (!ivHex || !tagHex || !ctHex) throw new Error("Malformed encrypted key");
+  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(ivHex, "hex"));
+  decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+  return Buffer.concat([decipher.update(Buffer.from(ctHex, "hex")), decipher.final()]).toString(
+    "utf8",
+  );
 }
 
 // ─── HWID ─────────────────────────────────────────────────────────────────────

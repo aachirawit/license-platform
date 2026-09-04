@@ -4,10 +4,20 @@ import { z } from "zod";
 // When durationDays is omitted, the service falls back to the package's
 // duration; when the package is omitted too, it defaults to lifetime.
 export const generateLicensesSchema = z.object({
-  quantity: z.coerce.number().int().min(1, "At least 1").max(500, "At most 500 at a time"),
+  // Optional so a custom-key request (which makes exactly one) can omit it.
+  quantity: z.coerce.number().int().min(1, "At least 1").max(500, "At most 500 at a time").default(1),
   packageId: z.string().min(1).optional(),
   // 0 = lifetime. null/omitted = inherit from package.
   durationDays: z.coerce.number().int().min(0).max(36_500).nullable().optional(),
+  // Optional custom key: letters/digits/dashes, e.g. "VIP-2026-ALPHA". When set,
+  // exactly one licence is created with this exact value (quantity is ignored).
+  customKey: z
+    .string()
+    .trim()
+    .min(3, "At least 3 characters")
+    .max(60, "At most 60 characters")
+    .regex(/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/, "Letters, digits and single dashes only")
+    .optional(),
 });
 
 export const licenseFiltersSchema = z.object({

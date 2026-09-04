@@ -52,6 +52,8 @@ export function GenerateDialog({
   const [quantity, setQuantity] = useState(10);
   const [packageId, setPackageId] = useState<string>(packages[0]?.id ?? "none");
   const [duration, setDuration] = useState<string>("package");
+  const [customMode, setCustomMode] = useState(false);
+  const [customKey, setCustomKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [keys, setKeys] = useState<string[] | null>(null);
   const [copied, setCopied] = useState(false);
@@ -61,15 +63,15 @@ export function GenerateDialog({
     try {
       const durationDays =
         duration === "package" ? undefined : Number(duration);
+      const payload =
+        customMode
+          ? { customKey: customKey.trim(), packageId: packageId === "none" ? undefined : packageId, durationDays }
+          : { quantity, packageId: packageId === "none" ? undefined : packageId, durationDays };
       const data = await apiFetch<{ keys: string[]; count: number }>(
         `/api/apps/${appSlug}/licenses/generate`,
         {
           method: "POST",
-          body: JSON.stringify({
-            quantity,
-            packageId: packageId === "none" ? undefined : packageId,
-            durationDays,
-          }),
+          body: JSON.stringify(payload),
         },
       );
       setKeys(data.keys);
@@ -96,6 +98,8 @@ export function GenerateDialog({
       setKeys(null);
       setQuantity(10);
       setDuration("package");
+      setCustomMode(false);
+      setCustomKey("");
     }, 200);
   }
 
@@ -112,7 +116,9 @@ export function GenerateDialog({
           <>
             <DialogHeader>
               <DialogTitle>Generate license keys</DialogTitle>
-              <DialogDescription>Keys are shown once and cannot be retrieved later.</DialogDescription>
+              <DialogDescription>
+                Copy the keys now, or copy any key later from its row in the list.
+              </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
@@ -147,10 +153,38 @@ export function GenerateDialog({
                     min={1}
                     max={500}
                     value={quantity}
+                    disabled={customMode}
                     onChange={(e) => setQuantity(Math.max(1, Number(e.target.value)))}
                   />
                 </div>
               </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary"
+                  checked={customMode}
+                  onChange={(e) => setCustomMode(e.target.checked)}
+                />
+                Use a custom key (creates exactly one)
+              </label>
+
+              {customMode && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="ckey">Custom key</Label>
+                  <Input
+                    id="ckey"
+                    value={customKey}
+                    onChange={(e) => setCustomKey(e.target.value.toUpperCase())}
+                    placeholder="VIP-2026-ALPHA"
+                    className="font-mono"
+                    maxLength={60}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Letters, digits and dashes. Must be unique.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <Label>Duration</Label>
@@ -173,9 +207,12 @@ export function GenerateDialog({
               <Button variant="outline" onClick={close}>
                 Cancel
               </Button>
-              <Button onClick={generate} disabled={submitting}>
+              <Button
+                onClick={generate}
+                disabled={submitting || (customMode && customKey.trim().length < 3)}
+              >
                 {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                Generate keys
+                {customMode ? "Create key" : "Generate keys"}
               </Button>
             </DialogFooter>
           </>

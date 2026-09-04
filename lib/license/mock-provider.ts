@@ -2,6 +2,7 @@ import type { License as DbLicense, Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import {
+  encryptKey,
   generateLicenseKey,
   hashHwid,
   hashLicenseKey,
@@ -46,6 +47,7 @@ export class MockLicenseProvider implements LicenseProvider {
       lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
       hwidBound: row.hwidHash !== null,
       hwidResetCount: row.hwidResetCount,
+      keyAvailable: row.keyCipher !== null,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
       note: row.note,
@@ -72,32 +74,30 @@ export class MockLicenseProvider implements LicenseProvider {
   // ── Generation ───────────────────────────────────────────────────────────────
 
   async generateLicenses(input: GenerateLicenseInput): Promise<GeneratedLicense[]> {
+    // Custom key: exactly one, the admin-supplied value. A collision means that
+    // key already exists - surface it rather than retrying a fixed value.
+    if (input.customKey) {
+      const rawKey = input.customKey.trim().toUpperCase();
+      try {
+        const row = await this.insertKey(input, rawKey);
+        return [{ license: this.toProvider(row), plaintextKey: rawKey }];
+      } catch (err) {
+        if (this.isUniqueViolation(err)) throw new Error("KEY_EXISTS");
+        throw err;
+      }
+    }
+
     const quantity = Math.max(1, Math.min(input.quantity, 500));
     const results: GeneratedLicense[] = [];
 
-    // Each key is generated, hashed, and inserted. On the astronomically
-    // unlikely hash collision (unique constraint), retry with a fresh key.
+    // Each key is generated, hashed, encrypted, and inserted. On the
+    // astronomically unlikely hash collision (unique constraint), retry.
     for (let i = 0; i < quantity; i++) {
       let row: DbLicense | null = null;
       for (let attempt = 0; attempt < 5 && !row; attempt++) {
         const rawKey = generateLicenseKey(input.keyPrefix);
         try {
-          row = await prisma.license.create({
-            data: {
-              appId: input.appId,
-              provider: "MOCK",
-              keyHash: hashLicenseKey(rawKey),
-              keyPrefix: keyPrefixOf(rawKey),
-              packageId: input.packageId,
-              status: "UNUSED",
-              expiresAt: this.expiryFromDays(input.durationDays),
-            },
-          });
-          // providerLicenseId mirrors the row id for the mock backend.
-          row = await prisma.license.update({
-            where: { id: row.id },
-            data: { providerLicenseId: row.id },
-          });
+          row = await this.insertKey(input, rawKey);
           results.push({ license: this.toProvider(row), plaintextKey: rawKey });
         } catch (err) {
           if (this.isUniqueViolation(err)) continue; // collision: retry
@@ -108,6 +108,27 @@ export class MockLicenseProvider implements LicenseProvider {
     }
 
     return results;
+  }
+
+  /** Insert one licence row for a raw key, storing hash + encrypted copy. */
+  private async insertKey(input: GenerateLicenseInput, rawKey: string): Promise<DbLicense> {
+    const created = await prisma.license.create({
+      data: {
+        appId: input.appId,
+        provider: "MOCK",
+        keyHash: hashLicenseKey(rawKey),
+        keyCipher: encryptKey(rawKey),
+        keyPrefix: keyPrefixOf(rawKey),
+        packageId: input.packageId,
+        status: "UNUSED",
+        expiresAt: this.expiryFromDays(input.durationDays),
+      },
+    });
+    // providerLicenseId mirrors the row id for the mock backend.
+    return prisma.license.update({
+      where: { id: created.id },
+      data: { providerLicenseId: created.id },
+    });
   }
 
   private expiryFromDays(days: number | null): Date | null {
@@ -146,19 +167,14 @@ export class MockLicenseProvider implements LicenseProvider {
     if (input.packageId) where.packageId = input.packageId;
     if (input.search) {
       const q = input.search.trim();
-      // A COMPLETE key (prefix + three 4-char groups) is matched exactly by its
-      // HMAC. We never stored the plaintext, but the hash is deterministic, so
-      // support can paste a customer's full key and find its licence - without
-      // the key ever being searchable in the clear.
-      if (/^[A-Z0-9]{1,6}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(q)) {
-        where.keyHash = hashLicenseKey(q);
-      } else {
-        // Partial: match the visible prefix or the admin-set name.
-        where.OR = [
-          { keyPrefix: { contains: q.toUpperCase() } },
-          { name: { contains: q, mode: "insensitive" } },
-        ];
-      }
+      // Match any of: the exact full key by its HMAC (deterministic, so pasting a
+      // customer's complete key - custom or generated - finds it without the key
+      // ever being searchable in the clear), the visible prefix, or the name.
+      where.OR = [
+        { keyHash: hashLicenseKey(q) },
+        { keyPrefix: { contains: q.toUpperCase() } },
+        { name: { contains: q, mode: "insensitive" } },
+      ];
     }
     if (input.createdAfter || input.createdBefore) {
       where.createdAt = {};

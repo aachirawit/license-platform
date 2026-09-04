@@ -15,6 +15,7 @@ export const ACTION_LABELS: Record<string, string> = {
   LICENSE_REVOKED: "revoked a license",
   LICENSE_EXTENDED: "extended a license",
   LICENSE_RENAMED: "renamed a license",
+  LICENSE_KEY_REVEALED: "revealed a license key",
   HWID_RESET: "reset a HWID",
   ADMIN_CREATED: "created an admin",
   ADMIN_UPDATED: "updated an admin",

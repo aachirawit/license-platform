@@ -31,6 +31,8 @@ export interface ProviderLicense {
   /** True when a machine is bound. The hash itself is never exposed. */
   hwidBound: boolean;
   hwidResetCount: number;
+  /** True when the full key can be revealed/copied (an encrypted copy exists). */
+  keyAvailable: boolean;
   createdAt: string;
   updatedAt: string;
   note: string | null;
@@ -51,6 +53,8 @@ export interface GenerateLicenseInput {
   /** App-specific prefix, e.g. "SZKP". */
   keyPrefix: string;
   quantity: number;
+  /** When set, use this exact key instead of generating (quantity is 1). */
+  customKey?: string | null;
   /** 0 or null = lifetime. */
   durationDays: number | null;
   packageId: string | null;

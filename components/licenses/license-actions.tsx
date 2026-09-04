@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   Ban,
   CalendarPlus,
+  Copy,
   MoreHorizontal,
   RotateCcw,
   ShieldCheck,
@@ -47,7 +48,7 @@ export function LicenseActions({
   perms,
   onChanged,
 }: {
-  license: Pick<ProviderLicense, "id" | "keyPrefix" | "status" | "hwidBound">;
+  license: Pick<ProviderLicense, "id" | "keyPrefix" | "status" | "hwidBound" | "keyAvailable">;
   perms: LicensePermissions;
   onChanged: (updated: ProviderLicense) => void;
 }) {
@@ -79,7 +80,22 @@ export function LicenseActions({
     }
   }
 
-  const anyAction = canBan || canUnban || canRevoke || perms.extend || perms.resetHwid;
+  // Copy the full key. Reveal decrypts server-side (audited), then we put it on
+  // the clipboard - the plaintext never renders in the table.
+  async function copyKey() {
+    try {
+      const { key } = await apiFetch<{ key: string }>(`/api/licenses/${license.id}/reveal`, {
+        method: "POST",
+      });
+      await navigator.clipboard.writeText(key);
+      toast.success("Key copied to clipboard");
+    } catch (err) {
+      toast.error(err instanceof ApiClientError ? err.message : "Could not copy key");
+    }
+  }
+
+  const canCopy = perms.resetHwid && license.keyAvailable;
+  const anyAction = canCopy || canBan || canUnban || canRevoke || perms.extend || perms.resetHwid;
   if (!anyAction) return null;
 
   return (
@@ -91,6 +107,12 @@ export function LicenseActions({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {canCopy && (
+            <DropdownMenuItem onClick={copyKey}>
+              <Copy className="h-4 w-4" />
+              Copy key
+            </DropdownMenuItem>
+          )}
           {perms.resetHwid && (
             <DropdownMenuItem onClick={() => setDialog("reset")} disabled={!license.hwidBound}>
               <RotateCcw className="h-4 w-4" />

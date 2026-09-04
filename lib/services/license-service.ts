@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { Errors } from "@/lib/http/errors";
+import { decryptKey } from "@/lib/security/crypto";
 import { getLicenseProvider } from "@/lib/license/factory";
 import type { ActivationResult, GeneratedLicense, ProviderLicense } from "@/lib/license/types";
 import { getAppOrThrow } from "./app-service";
@@ -89,13 +90,23 @@ export async function generateLicenses(
   }
 
   const provider = getLicenseProvider(app);
-  const generated = await provider.generateLicenses({
-    appId: app.id,
-    keyPrefix: app.keyPrefix ?? app.appId.slice(0, 4),
-    quantity: input.quantity,
-    durationDays,
-    packageId: input.packageId ?? null,
-  });
+  let generated: GeneratedLicense[];
+  try {
+    generated = await provider.generateLicenses({
+      appId: app.id,
+      keyPrefix: app.keyPrefix ?? app.appId.slice(0, 4),
+      // A custom key always produces exactly one licence.
+      quantity: input.customKey ? 1 : input.quantity,
+      durationDays,
+      packageId: input.packageId ?? null,
+      customKey: input.customKey ?? null,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === "KEY_EXISTS") {
+      throw Errors.conflict("That key already exists. Choose a different one.");
+    }
+    throw err;
+  }
 
   await writeAudit({
     adminId: ctx.adminId,
@@ -255,6 +266,46 @@ export async function revokeLicense(id: string, reason: string | undefined, ctx:
     userAgent: ctx.userAgent,
   });
   return result;
+}
+
+/**
+ * Decrypt and return the full plaintext key for copy/reveal. Only works for keys
+ * stored with an encrypted copy (keyCipher); older keys return null. This exposes
+ * a secret, so it is a privileged, audited action.
+ */
+export async function revealLicenseKey(id: string, ctx: ActionContext): Promise<string> {
+  const row = await prisma.license.findUnique({
+    where: { id },
+    include: { app: true },
+  });
+  if (!row) throw Errors.notFound("LICENSE_NOT_FOUND", "License not found");
+  if (!row.keyCipher) {
+    throw Errors.invalid("This key predates encrypted storage and cannot be revealed.");
+  }
+
+  const plaintext = decryptKey(row.keyCipher);
+
+  await writeAudit({
+    adminId: ctx.adminId,
+    action: "LICENSE_KEY_REVEALED",
+    appId: row.appId,
+    targetType: "License",
+    targetId: id,
+    metadata: { licensePrefix: row.keyPrefix },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
+  await recordSecurityEvent({
+    type: "SUSPICIOUS_ACTIVITY",
+    severity: "LOW",
+    appId: row.appId,
+    licensePrefix: row.keyPrefix,
+    ip: ctx.ip,
+    message: `Full key for ${row.keyPrefix} was revealed by an admin`,
+    alert: false,
+  });
+
+  return plaintext;
 }
 
 export async function renameLicense(id: string, name: string, ctx: ActionContext) {

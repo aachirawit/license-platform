@@ -133,6 +133,11 @@ model License {
   // shown to the admin exactly once, at generation time. Unique so a lookup by
   // hash is a single indexed read.
   keyHash   String  @unique
+  // AES-256-GCM encryption of the plaintext key (iv.tag.ciphertext), so an admin
+  // can reveal/copy the full key from the panel. A DB dump without
+  // KEY_ENCRYPTION_SECRET (server env only) cannot decrypt it. Null for keys
+  // generated before this column existed - those stay reveal-only-at-generation.
+  keyCipher String?
   // First segment only, e.g. "SZKP-7X2K", for display: "SZKP-7X2K-••••".
   keyPrefix String
 
