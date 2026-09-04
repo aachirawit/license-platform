@@ -1,0 +1,249 @@
+// Multi-app license management platform.
+//
+// What this database owns vs. what a provider owns
+// ------------------------------------------------
+// This Postgres is the authoritative store for platform metadata: apps,
+// packages, admins, sessions, audit logs and security events. It also holds a
+// row per licence with the dashboard-facing metadata (status, expiry, masked
+// key, hwid hash).
+//
+// When an app uses the MOCK provider, this database is ALSO the authoritative
+// licence engine - the mock provider reads and writes these rows directly.
+//
+// When an app is later switched to an external provider (e.g. KeyAuth), that
+// provider becomes authoritative for licence state, and the License rows here
+// become a synchronised cache keyed by `providerLicenseId`. The provider
+// abstraction is what keeps the dashboard identical across both cases.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Neon: pooled URL for the app, direct URL for migrations. Falls back to
+  // DATABASE_URL for a plain local Postgres where directUrl is not needed.
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum AppStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum LicenseProviderKind {
+  MOCK
+  KEYAUTH
+}
+
+enum LicenseStatus {
+  UNUSED // generated, never activated
+  ACTIVE // activated and valid
+  EXPIRED // past expiresAt
+  BANNED // blocked by an admin, reversible
+  REVOKED // permanently killed
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+  SUPPORT
+  READ_ONLY
+}
+
+enum SecuritySeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// ─── Application ──────────────────────────────────────────────────────────────
+
+model App {
+  id             String              @id @default(cuid())
+  // Human name, e.g. "SZK Optimizer".
+  name           String
+  // URL-safe identifier used in the dashboard, e.g. "szk-optimizer".
+  slug           String              @unique
+  // Stable ID a C++ client sends as APP_ID, e.g. "SZK". Uppercase, unique.
+  appId          String              @unique
+  description    String?
+  // Lucide icon name or short emoji; presentation only.
+  icon           String?
+  status         AppStatus           @default(ACTIVE)
+  provider       LicenseProviderKind @default(MOCK)
+  // Non-secret provider configuration (e.g. KeyAuth app version/name). Real
+  // secrets belong in environment variables, not here; if a secret must live
+  // in a row, encrypt it at rest before writing - see lib/security.
+  providerConfig Json?
+  // Per-app prefix for generated keys, e.g. "SZKP". Derived from appId if null.
+  keyPrefix      String?
+
+  packages       LicensePackage[]
+  licenses       License[]
+  auditLogs      AuditLog[]
+  securityEvents SecurityEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// ─── License package ──────────────────────────────────────────────────────────
+
+model LicensePackage {
+  id          String    @id @default(cuid())
+  appId       String
+  app         App       @relation(fields: [appId], references: [id], onDelete: Cascade)
+  name        String // "Premium 30 Days"
+  slug        String
+  description String?
+  // 0 means lifetime / non-expiring.
+  durationDays Int      @default(30)
+  // Minor units (cents) to avoid float money; presentation only.
+  priceCents  Int       @default(0)
+  status      AppStatus @default(ACTIVE)
+
+  licenses License[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([appId, slug])
+  @@index([appId])
+}
+
+// ─── License ──────────────────────────────────────────────────────────────────
+
+model License {
+  id    String @id @default(cuid())
+  appId String
+  app   App    @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  provider LicenseProviderKind @default(MOCK)
+  // The provider's own id for this licence. For MOCK this equals `id`; for an
+  // external provider it is that system's id, and the row is a synced cache.
+  providerLicenseId String?
+
+  // HMAC-SHA256 of the raw key. The plaintext key is never stored - it is
+  // shown to the admin exactly once, at generation time. Unique so a lookup by
+  // hash is a single indexed read.
+  keyHash   String  @unique
+  // First segment only, e.g. "SZKP-7X2K", for display: "SZKP-7X2K-••••".
+  keyPrefix String
+
+  packageId String?
+  package   LicensePackage? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+
+  status    LicenseStatus @default(UNUSED)
+  expiresAt DateTime? // null = lifetime
+
+  activatedAt DateTime?
+  lastUsedAt  DateTime?
+
+  // HMAC-SHA256 of the bound machine id, or null when unbound. The raw HWID is
+  // never stored, and is never returned to a client on mismatch.
+  hwidHash       String?
+  hwidResetCount Int     @default(0)
+
+  // Last IP seen using the licence, for the detail view. Treated as sensitive.
+  lastIp String?
+
+  // Free-form admin note, e.g. ban reason.
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([appId, status])
+  @@index([appId, createdAt])
+  @@index([appId, expiresAt])
+  @@index([keyPrefix])
+}
+
+// ─── Admin & sessions ─────────────────────────────────────────────────────────
+
+model Admin {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  // argon2id hash. Never returned to the client.
+  passwordHash String
+  role         AdminRole @default(READ_ONLY)
+  disabled     Boolean   @default(false)
+  lastLoginAt  DateTime?
+
+  sessions  Session[]
+  auditLogs AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  adminId   String
+  admin     Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  // Opaque random token stored as a hash; the cookie holds the raw token.
+  tokenHash String   @unique
+  ip        String?
+  userAgent String?
+  expiresAt DateTime
+  // Set when an admin logs out or a session is revoked; a revoked session is
+  // rejected even before it expires.
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([expiresAt])
+}
+
+// ─── Audit log (append-only at the application layer) ─────────────────────────
+
+model AuditLog {
+  id         String  @id @default(cuid())
+  adminId    String?
+  admin      Admin?  @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  appId      String?
+  app        App?    @relation(fields: [appId], references: [id], onDelete: SetNull)
+  action     String // e.g. "LICENSE_BANNED"
+  targetType String? // e.g. "License"
+  targetId   String?
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([appId, createdAt])
+  @@index([adminId, createdAt])
+  @@index([action, createdAt])
+}
+
+// ─── Security events ──────────────────────────────────────────────────────────
+
+model SecurityEvent {
+  id        String           @id @default(cuid())
+  appId     String?
+  app       App?             @relation(fields: [appId], references: [id], onDelete: SetNull)
+  type      String // e.g. "HWID_MISMATCH"
+  severity  SecuritySeverity @default(LOW)
+  // Masked/short identifiers only - never a full key or full HWID.
+  licensePrefix String?
+  ip        String?
+  message   String
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([appId, createdAt])
+  @@index([type, createdAt])
+  @@index([severity, createdAt])
+}
