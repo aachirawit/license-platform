@@ -5,6 +5,7 @@ import type { GeneratedLicense, ProviderLicense } from "@/lib/license/types";
 import { getAppOrThrow } from "./app-service";
 import { writeAudit } from "./audit-service";
 import { recordSecurityEvent } from "./security-service";
+import { notifyDiscord } from "@/lib/discord/discord-service";
 import type { GenerateLicensesInput, LicenseFilters } from "@/lib/validation/license";
 
 // The one place UI/API talk to for licences. It resolves the app's provider via
@@ -108,6 +109,15 @@ export async function generateLicenses(
     },
     ip: ctx.ip,
     userAgent: ctx.userAgent,
+  });
+
+  // Optional Discord notice for a new batch (fire-and-forget, masked, no-op if
+  // the webhook is unset). Not a security event - just an operational heads-up.
+  void notifyDiscord({
+    type: "LICENSE_GENERATED",
+    severity: "LOW",
+    appId: app.appId,
+    message: `${generated.length} license(s) generated for ${app.name}`,
   });
 
   return generated;
