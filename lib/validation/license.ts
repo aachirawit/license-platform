@@ -30,5 +30,15 @@ export const extendLicenseSchema = z.object({
   days: z.coerce.number().int().min(1, "At least 1 day").max(36_500),
 });
 
+// Public activation: what a desktop client sends to authenticate a key. The app
+// is identified by its public appId (not the internal cuid). Kept deliberately
+// small - no admin fields, no status, nothing the client could try to assert.
+export const activateSchema = z.object({
+  appId: z.string().trim().min(1, "appId is required").max(64),
+  key: z.string().trim().min(1, "key is required").max(128),
+  hwid: z.string().trim().min(1, "hwid is required").max(256),
+});
+
 export type GenerateLicensesInput = z.infer<typeof generateLicensesSchema>;
 export type LicenseFilters = z.infer<typeof licenseFiltersSchema>;
+export type ActivateInput = z.infer<typeof activateSchema>;

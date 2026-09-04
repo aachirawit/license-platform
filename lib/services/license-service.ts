@@ -1,12 +1,12 @@
 import { prisma } from "@/lib/db/prisma";
 import { Errors } from "@/lib/http/errors";
 import { getLicenseProvider } from "@/lib/license/factory";
-import type { GeneratedLicense, ProviderLicense } from "@/lib/license/types";
+import type { ActivationResult, GeneratedLicense, ProviderLicense } from "@/lib/license/types";
 import { getAppOrThrow } from "./app-service";
 import { writeAudit } from "./audit-service";
-import { recordSecurityEvent } from "./security-service";
+import { recordSecurityEvent, type SecurityEventType } from "./security-service";
 import { notifyDiscord } from "@/lib/discord/discord-service";
-import type { GenerateLicensesInput, LicenseFilters } from "@/lib/validation/license";
+import type { ActivateInput, GenerateLicensesInput, LicenseFilters } from "@/lib/validation/license";
 
 // The one place UI/API talk to for licences. It resolves the app's provider via
 // the factory and adds the platform concerns the provider does not own: app
@@ -121,6 +121,54 @@ export async function generateLicenses(
   });
 
   return generated;
+}
+
+/**
+ * Public key activation for desktop clients. Unauthenticated: no admin, no app
+ * ownership implied. The app is resolved by its PUBLIC appId column, and every
+ * failure returns the provider's generic code so the endpoint cannot be used as
+ * an oracle for which apps or keys exist. Notable refusals are recorded as
+ * security events (and HWID mismatches / banned attempts raise an alert), since
+ * this is exactly where key sharing and brute force show up.
+ */
+export async function activateLicense(
+  input: ActivateInput,
+  ip: string | null,
+): Promise<ActivationResult> {
+  // Resolve by the public appId (e.g. "SZKOPT"), not the internal cuid. An
+  // unknown app looks identical to an unknown key: generic INVALID_LICENSE.
+  const app = await prisma.app.findUnique({ where: { appId: input.appId } });
+  if (!app) return { ok: false, code: "INVALID_LICENSE" };
+
+  const result = await getLicenseProvider(app).activate({
+    appId: app.id,
+    rawKey: input.key,
+    rawHwid: input.hwid,
+    ip: ip ?? undefined,
+  });
+
+  if (!result.ok) {
+    const typeByCode: Record<typeof result.code, SecurityEventType> = {
+      INVALID_LICENSE: "INVALID_LICENSE",
+      LICENSE_EXPIRED: "LICENSE_EXPIRED_ATTEMPT",
+      LICENSE_BANNED: "LICENSE_BANNED_ATTEMPT",
+      LICENSE_REVOKED: "LICENSE_BANNED_ATTEMPT",
+      HWID_MISMATCH: "HWID_MISMATCH",
+    };
+    // INVALID_LICENSE is the brute-force signature - noisy, so LOW. A mismatch
+    // or a hit on a banned/revoked key is the higher-signal, alert-worthy case.
+    const highSignal = result.code === "HWID_MISMATCH" || result.code === "LICENSE_BANNED";
+    await recordSecurityEvent({
+      type: typeByCode[result.code],
+      severity: result.code === "INVALID_LICENSE" ? "LOW" : "MEDIUM",
+      appId: app.id,
+      ip,
+      message: `Activation refused (${result.code}) for app ${app.appId}`,
+      alert: highSignal,
+    });
+  }
+
+  return result;
 }
 
 // ── Single-licence actions ────────────────────────────────────────────────────

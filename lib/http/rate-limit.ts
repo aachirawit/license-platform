@@ -70,4 +70,7 @@ export const RULES = {
   generate: { name: "generate", limit: 20, windowMs: 60_000 },
   mutation: { name: "mutation", limit: 60, windowMs: 60_000 },
   read: { name: "read", limit: 240, windowMs: 60_000 },
+  // Public, unauthenticated key activation. Kept tight per IP to blunt key
+  // brute-forcing; a legitimate client activates only occasionally.
+  activate: { name: "activate", limit: 30, windowMs: 5 * 60_000 },
 } satisfies Record<string, RateLimitRule>;
