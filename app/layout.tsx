@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { GeistSans } from "geist/font/sans";
 import { Toaster } from "sonner";
 
 import "./globals.css";
@@ -13,7 +14,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   // Dark by default; the CSS applies the dark palette on :root:not(.light).
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className={`dark ${GeistSans.variable}`}>
       <body className="min-h-screen font-sans antialiased">
         {children}
         <Toaster
