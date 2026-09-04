@@ -38,3 +38,65 @@ export async function writeAudit(input: AuditInput): Promise<void> {
     );
   }
 }
+
+// ── Read side (Audit Logs page) ───────────────────────────────────────────────
+
+export interface AuditLogDto {
+  id: string;
+  action: string;
+  adminName: string | null;
+  appName: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  ip: string | null;
+  createdAt: string;
+}
+
+export interface AuditFilters {
+  action?: string;
+  appId?: string;
+  adminId?: string;
+  page: number;
+  pageSize: number;
+}
+
+export async function listAuditLogs(filters: AuditFilters): Promise<{
+  logs: AuditLogDto[];
+  total: number;
+  pageCount: number;
+}> {
+  const where = {
+    ...(filters.action ? { action: filters.action } : {}),
+    ...(filters.appId ? { appId: filters.appId } : {}),
+    ...(filters.adminId ? { adminId: filters.adminId } : {}),
+  };
+
+  const [rows, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: filters.pageSize,
+      skip: (filters.page - 1) * filters.pageSize,
+      include: {
+        admin: { select: { name: true } },
+        app: { select: { name: true } },
+      },
+    }),
+    prisma.auditLog.count({ where }),
+  ]);
+
+  return {
+    logs: rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      adminName: r.admin?.name ?? null,
+      appName: r.app?.name ?? null,
+      targetType: r.targetType,
+      targetId: r.targetId,
+      ip: r.ip,
+      createdAt: r.createdAt.toISOString(),
+    })),
+    total,
+    pageCount: Math.max(1, Math.ceil(total / filters.pageSize)),
+  };
+}
