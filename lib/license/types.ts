@@ -20,6 +20,8 @@ export interface ProviderLicense {
   providerLicenseId: string | null;
   /** Masked display form, e.g. "SZKP-7X2K". Never the full key. */
   keyPrefix: string;
+  /** Optional admin-set label for the key. */
+  name: string | null;
   packageId: string | null;
   status: LicenseStatus;
   /** ISO string, or null for lifetime. */

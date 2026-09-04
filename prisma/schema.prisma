@@ -136,6 +136,11 @@ model License {
   // First segment only, e.g. "SZKP-7X2K", for display: "SZKP-7X2K-••••".
   keyPrefix String
 
+  // Optional admin-set label for the licence, e.g. a customer name or order id.
+  // Free-form and searchable. Distinct from `note`, which holds ban/revoke
+  // reasons; this is a human name for the key.
+  name String?
+
   packageId String?
   package   LicensePackage? @relation(fields: [packageId], references: [id], onDelete: SetNull)
 

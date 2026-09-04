@@ -38,6 +38,7 @@ export class MockLicenseProvider implements LicenseProvider {
       provider: "MOCK",
       providerLicenseId: row.providerLicenseId ?? row.id,
       keyPrefix: row.keyPrefix,
+      name: row.name,
       packageId: row.packageId,
       status,
       expiresAt: row.expiresAt?.toISOString() ?? null,
@@ -143,7 +144,22 @@ export class MockLicenseProvider implements LicenseProvider {
       }
     }
     if (input.packageId) where.packageId = input.packageId;
-    if (input.search) where.keyPrefix = { contains: input.search.toUpperCase() };
+    if (input.search) {
+      const q = input.search.trim();
+      // A COMPLETE key (prefix + three 4-char groups) is matched exactly by its
+      // HMAC. We never stored the plaintext, but the hash is deterministic, so
+      // support can paste a customer's full key and find its licence - without
+      // the key ever being searchable in the clear.
+      if (/^[A-Z0-9]{1,6}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(q)) {
+        where.keyHash = hashLicenseKey(q);
+      } else {
+        // Partial: match the visible prefix or the admin-set name.
+        where.OR = [
+          { keyPrefix: { contains: q.toUpperCase() } },
+          { name: { contains: q, mode: "insensitive" } },
+        ];
+      }
+    }
     if (input.createdAfter || input.createdBefore) {
       where.createdAt = {};
       if (input.createdAfter) where.createdAt.gte = input.createdAfter;

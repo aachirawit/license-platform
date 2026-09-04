@@ -188,6 +188,7 @@ export function LicenseTable({
                     >
                       {maskedKey(l.keyPrefix)}
                     </Link>
+                    {l.name && <div className="text-xs text-muted-foreground">{l.name}</div>}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {packageName(l.packageId)}

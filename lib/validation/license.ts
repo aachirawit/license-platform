@@ -30,6 +30,11 @@ export const extendLicenseSchema = z.object({
   days: z.coerce.number().int().min(1, "At least 1 day").max(36_500),
 });
 
+// Set or clear the admin label for a key. Empty string clears it.
+export const renameLicenseSchema = z.object({
+  name: z.string().trim().max(80, "At most 80 characters"),
+});
+
 // Public activation: what a desktop client sends to authenticate a key. The app
 // is identified by its public appId (not the internal cuid). Kept deliberately
 // small - no admin fields, no status, nothing the client could try to assert.

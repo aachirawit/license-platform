@@ -1,15 +1,91 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Pencil, X } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LicenseStatusBadge } from "./status-badge";
 import { LicenseActions, type LicensePermissions } from "./license-actions";
+import { apiFetch, ApiClientError } from "@/lib/api-client";
 import { formatDateTime, maskedKey, relativeTime } from "@/lib/format";
 import type { ProviderLicense } from "@/lib/license/types";
+
+// Inline editor for the admin label on a key. Gated on the same permission as
+// the other support actions (perms.resetHwid).
+function NameEditor({
+  id,
+  name,
+  canEdit,
+  onSaved,
+}: {
+  id: string;
+  name: string | null;
+  canEdit: boolean;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(name ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await apiFetch(`/api/licenses/${id}`, { method: "PATCH", body: JSON.stringify({ name: value }) });
+      toast.success(value.trim() ? "Name updated" : "Name cleared");
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiClientError ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <Input
+          autoFocus
+          value={value}
+          maxLength={80}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !saving && save()}
+          placeholder="e.g. customer name / order id"
+          className="h-7 w-56 text-sm"
+        />
+        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={saving} onClick={save}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+        </Button>
+        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={saving}
+          onClick={() => { setValue(name ?? ""); setEditing(false); }}>
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 text-sm">
+      <span className={name ? "font-medium" : "text-muted-foreground italic"}>
+        {name || "Unnamed"}
+      </span>
+      {canEdit && (
+        <button
+          onClick={() => setEditing(true)}
+          className="text-muted-foreground hover:text-foreground"
+          aria-label="Edit name"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 export interface TimelineEntry {
   action: string;
@@ -32,6 +108,7 @@ const ACTION_LABEL: Record<string, string> = {
   LICENSE_UNBANNED: "Unbanned",
   LICENSE_REVOKED: "Revoked",
   LICENSE_EXTENDED: "Extended",
+  LICENSE_RENAMED: "Renamed",
   HWID_RESET: "HWID reset",
 };
 
@@ -71,6 +148,14 @@ export function LicenseDetail({
                 {appName}
               </Link>{" "}
               · {appSlug}
+            </div>
+            <div className="mt-1">
+              <NameEditor
+                id={license.id}
+                name={license.name}
+                canEdit={perms.resetHwid}
+                onSaved={() => router.refresh()}
+              />
             </div>
           </div>
         </div>

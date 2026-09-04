@@ -257,6 +257,26 @@ export async function revokeLicense(id: string, reason: string | undefined, ctx:
   return result;
 }
 
+export async function renameLicense(id: string, name: string, ctx: ActionContext) {
+  const row = await loadAppForLicense(id);
+  const trimmed = name.trim();
+  const updated = await prisma.license.update({
+    where: { id },
+    data: { name: trimmed === "" ? null : trimmed },
+  });
+  await writeAudit({
+    adminId: ctx.adminId,
+    action: "LICENSE_RENAMED",
+    appId: row.appId,
+    targetType: "License",
+    targetId: id,
+    metadata: { licensePrefix: row.keyPrefix, name: updated.name },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
+  return getLicenseProvider(row.app).getLicense(id);
+}
+
 export async function extendLicense(id: string, days: number, ctx: ActionContext) {
   const row = await loadAppForLicense(id);
   const result = await getLicenseProvider(row.app).extendLicense(id, days);
