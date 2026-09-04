@@ -63,6 +63,19 @@ A lapsed key cannot activate even if a status update lagged.
   server-only and the message is masked: no full key, no full HWID, no token,
   masked IP only. A webhook failure is swallowed and never breaks a request.
 
+## Activation response signing
+
+The public `/api/activate` reply decides whether a desktop client unlocks, so it
+can be **Ed25519-signed** to stop a trusted-root proxy from forging a "valid"
+response. When `ACTIVATION_SIGNING_PRIVATE_KEY` is set, the server signs
+`timestamp + body` and returns `x-signature-ed25519` + `x-signature-timestamp`
+(the same scheme the client uses for KeyAuth); the client verifies against the
+public key compiled into it, and rejects a reply whose signature is missing,
+wrong, or older than five minutes. The private key lives only in the server
+environment; the public key is safe to ship in the client. With no key set,
+replies are unsigned and trusted over TLS only — set the key on both sides to
+close the MITM gap.
+
 ## Transport and headers
 
 Set in `next.config.ts`, applied to every route:
@@ -105,3 +118,6 @@ digest reference.
 - [ ] Security headers verified on the deployed origin (`curl -I https://…`).
 - [ ] Public `/api/activate` tested end to end from a client, including the
       refusal codes.
+- [ ] If MITM protection is required: `ACTIVATION_SIGNING_PRIVATE_KEY` set on the
+      server and the matching public key compiled into the client
+      (`SZK_PLATFORM_SIGNING_KEY`); a tampered reply is rejected.

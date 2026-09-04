@@ -3,11 +3,23 @@ import type { NextRequest } from "next/server";
 import { clientIp } from "@/lib/http/request";
 import { toErrorResponse } from "@/lib/http/errors";
 import { rateLimit, RULES } from "@/lib/http/rate-limit";
-import { ok, fail } from "@/lib/http/response";
 import { activateLicense } from "@/lib/services/license-service";
+import { signActivationBody } from "@/lib/security/activation-signing";
 import { activateSchema } from "@/lib/validation/license";
 
 export const runtime = "nodejs";
+
+// Serialise + (optionally) Ed25519-sign the reply. We build the body string
+// ourselves rather than using NextResponse.json so the exact bytes we sign are
+// the exact bytes that go on the wire - the client verifies the signature over
+// (timestamp + body), so any re-serialisation would break it.
+function respond(payload: object, status: number): Response {
+  const body = JSON.stringify(payload);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const sig = signActivationBody(body);
+  if (sig) Object.assign(headers, sig);
+  return new Response(body, { status, headers });
+}
 
 // POST /api/activate — PUBLIC, unauthenticated key activation for desktop
 // clients. No session, no admin. Rate-limited per IP to blunt brute force.
@@ -39,17 +51,28 @@ export async function POST(req: NextRequest) {
 
     const result = await activateLicense(input, ip);
     if (!result.ok) {
-      return fail(result.code, REFUSAL_MESSAGE[result.code] ?? "Activation refused.", 403);
+      return respond(
+        {
+          success: false,
+          code: result.code,
+          message: REFUSAL_MESSAGE[result.code] ?? "Activation refused.",
+        },
+        403,
+      );
     }
 
-    return ok(
+    return respond(
       {
-        valid: true,
-        status: result.license.status,
-        expiresAt: result.license.expiresAt,
-        activatedAt: result.license.activatedAt,
+        success: true,
+        code: "LICENSE_VALID",
+        data: {
+          valid: true,
+          status: result.license.status,
+          expiresAt: result.license.expiresAt,
+          activatedAt: result.license.activatedAt,
+        },
       },
-      "LICENSE_VALID",
+      200,
     );
   } catch (err) {
     return toErrorResponse(err);

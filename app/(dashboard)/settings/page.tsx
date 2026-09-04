@@ -4,6 +4,7 @@ import { requirePermission } from "@/lib/auth/context";
 import { listApps } from "@/lib/services/app-service";
 import { SESSION_TTL_MS } from "@/lib/auth/session";
 import { RULES } from "@/lib/http/rate-limit";
+import { isActivationSigningEnabled } from "@/lib/security/activation-signing";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -69,6 +70,16 @@ export default async function SettingsPage() {
               value={`${RULES.login.limit} / ${Math.round(RULES.login.windowMs / 60_000)} min`}
             />
             <Row label="Session revocation" value="Server-side (instant)" />
+            <Row
+              label="Activation response signing"
+              value={
+                isActivationSigningEnabled() ? (
+                  <Badge variant="success">Ed25519</Badge>
+                ) : (
+                  <Badge variant="muted">TLS only</Badge>
+                )
+              }
+            />
             <Row label="Audit retention" value={`${retention.audit} days`} />
           </CardContent>
         </Card>
