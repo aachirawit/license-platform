@@ -11,29 +11,32 @@ import { updateAppSchema } from "@/lib/validation/app";
 
 export const runtime = "nodejs";
 
-type Params = { params: Promise<{ id: string }> };
+// The dynamic segment is named [appId] to match the nested licence/package
+// routes under the same path - Next requires one consistent slug name per path
+// position. It still accepts an app id or slug (app-service resolves either).
+type Params = { params: Promise<{ appId: string }> };
 
-// GET /api/apps/[id]
+// GET /api/apps/[appId]
 export async function GET(_req: NextRequest, { params }: Params) {
   try {
     await requirePermission("app.read");
-    const { id } = await params;
-    return ok({ app: await getApp(id) });
+    const { appId } = await params;
+    return ok({ app: await getApp(appId) });
   } catch (err) {
     return toErrorResponse(err);
   }
 }
 
-// PATCH /api/apps/[id]
+// PATCH /api/apps/[appId]
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("app.write");
     rateLimit(RULES.mutation, admin.id);
 
-    const { id } = await params;
+    const { appId } = await params;
     const body = await req.json().catch(() => null);
     const input = updateAppSchema.parse(body);
-    const app = await updateApp(id, input);
+    const app = await updateApp(appId, input);
 
     await writeAudit({
       adminId: admin.id,
@@ -52,7 +55,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 }
 
-// DELETE /api/apps/[id] — destructive (cascades licences), SUPER_ADMIN only.
+// DELETE /api/apps/[appId] — destructive (cascades licences), SUPER_ADMIN only.
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
     const admin = await requirePermission("app.write");
@@ -61,14 +64,14 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     }
     rateLimit(RULES.mutation, admin.id);
 
-    const { id } = await params;
-    const result = await deleteApp(id);
+    const { appId } = await params;
+    const result = await deleteApp(appId);
 
     await writeAudit({
       adminId: admin.id,
       action: "APP_DELETED",
       targetType: "App",
-      targetId: id,
+      targetId: appId,
       metadata: { removedLicenses: result.removedLicenses },
       ip: clientIp(req),
       userAgent: userAgent(req),
