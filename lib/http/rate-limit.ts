@@ -2,6 +2,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 
 import { Errors } from "./errors";
+import { logger } from "@/lib/logger";
 
 // Rate limiting with two backends behind one async call.
 //
@@ -114,16 +115,30 @@ function rateLimitInProcess(rule: RateLimitRule, identifier: string): void {
  */
 export async function rateLimit(rule: RateLimitRule, identifier: string): Promise<void> {
   const global = upstashLimiters();
-  if (global) {
-    const limiter = global.get(rule.name);
-    if (limiter) {
-      const { success, reset } = await limiter.limit(identifier);
-      if (!success) {
-        const retryMs = Math.max(0, reset - Date.now());
-        throw Errors.rateLimited(`Too many requests. Try again in ${Math.ceil(retryMs / 1000)}s.`);
-      }
+  const limiter = global?.get(rule.name);
+
+  if (limiter) {
+    let result: { success: boolean; reset: number };
+    try {
+      result = await limiter.limit(identifier);
+    } catch (err) {
+      // The rate limiter must NEVER take down the API. If Upstash is misconfigured
+      // (e.g. a bad token) or unreachable, log it and fall back to the in-process
+      // limiter so requests still get a per-instance ceiling instead of a 500.
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), rule: rule.name },
+        "ratelimit_upstash_error_fallback",
+      );
+      rateLimitInProcess(rule, identifier);
       return;
     }
+
+    if (!result.success) {
+      const retryMs = Math.max(0, result.reset - Date.now());
+      throw Errors.rateLimited(`Too many requests. Try again in ${Math.ceil(retryMs / 1000)}s.`);
+    }
+    return;
   }
+
   rateLimitInProcess(rule, identifier);
 }
